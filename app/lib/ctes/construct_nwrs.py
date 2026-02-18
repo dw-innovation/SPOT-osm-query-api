@@ -5,6 +5,28 @@ from .construct_where_clause import construct_cte_where_clause
 
 
 def construct_nwr_cte(node):
+    """
+    Constructs a SQL Common Table Expression (CTE) to select and transform
+    Node/Way/Relation (NWR) data from an OSM-derived table based on given filters.
+
+    This CTE:
+      - Applies spatial transformation to geometries.
+      - Filters data using provided tag-based filters.
+      - Outputs metadata such as set ID, name, geometry, and tags.
+
+    Args:
+        node (dict): A dictionary containing node configuration. Expected keys:
+            - "id" (str or int): Identifier for the resulting dataset (used as CTE name and set_id).
+            - "name" (str): Human-readable name of the set.
+            - "filters" (list): A list of filter clauses used in the WHERE condition.
+
+    Returns:
+        psycopg2.sql.Composed: A SQL CTE expression for retrieving and filtering NWR features.
+
+    Notes:
+        - Uses the UTM projection zone from `flask.g.utm` to transform geometries.
+        - Reads the target table name from the `TABLE_VIEW` environment variable.
+    """
     set_id = node.get("id", 0)
     set_name = node.get("name", "name")
     filters = construct_cte_where_clause(node.get("filters", []))

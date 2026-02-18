@@ -6,6 +6,36 @@ from psycopg2 import sql
 
 
 def construct_cluster_cte(node):
+    """
+    Constructs a SQL Common Table Expression (CTE) that performs spatial clustering
+    using the DBSCAN algorithm on OSM features.
+
+    This function:
+      - Converts clustering parameters to meters.
+      - Constructs a SQL CTE that clusters spatial features using PostGIS's
+        `ST_ClusterDBSCAN`.
+      - Computes centroids and collects relevant metadata for each cluster.
+
+    Args:
+        node (dict): A dictionary defining the node configuration. Expected keys:
+            - "maxDistance" (str or float): Max distance for DBSCAN, defaults to "50".
+            - "minPoints" (int): Minimum number of points to form a cluster, defaults to 2.
+            - "id" (str): Unique ID for the cluster set.
+            - "name" (str): Human-readable name of the cluster set.
+            - "filters" (list): List of filter conditions to be applied.
+
+    Returns:
+        psycopg2.sql.Composed: A SQL statement defining the CTE for clustering.
+
+    Raises:
+        None explicitly, but any errors during SQL generation are caught and printed.
+
+    Notes:
+        - Uses the current UTM zone from `flask.g.utm`.
+        - The resulting clusters are grouped by DBSCAN cluster ID, with geometry
+          centroids and associated metadata.
+        - Returns None if an exception is raised during construction.
+    """
     try:
         eps = node.get("maxDistance", "50")
         eps_in_meters = float(distance_to_meters(eps))

@@ -29,6 +29,16 @@ from jwt import InvalidTokenError
 load_dotenv()
 
 def check_env_vars():
+    """
+    Ensure all required environment variables are present.
+
+    Raises:
+        EnvironmentError: If one or more required variables are missing.
+
+    Required vars:
+        DATABASE_NAME, DATABASE_USER, DATABASE_PASSWORD, DATABASE_HOST, DATABASE_PORT,
+        TABLE_VIEW, JWT_SECRET, TIMEOUT
+    """
     required_vars = [
         "DATABASE_NAME",
         "DATABASE_USER",
@@ -68,13 +78,34 @@ with open("./schemas/spot_query.json", "r") as file:
 
 @app.before_first_request
 def setup():
+    """
+    Initialize the database connection pool before the first request.
+    """
     initialize_connection_pool(DATABASE)
 
 @app.teardown_appcontext
 def teardown(e=None):
+    """
+    Close/return database connections at the end of the app context.
+
+    Args:
+        e (Exception | None): Optional teardown exception provided by Flask.
+    """
     close_db(e)
 
 def validate_jwt(token):
+    """
+    Validate a JWT using the configured secret and HS256 algorithm.
+
+    Args:
+        token (str): The bearer token string (without the 'Bearer ' prefix).
+
+    Returns:
+        dict: The decoded JWT payload if validation succeeds.
+
+    Raises:
+        ValueError: If the token is invalid or expired.
+    """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         return payload
@@ -83,6 +114,17 @@ def validate_jwt(token):
 
 @app.before_request
 def check_jwt():
+    """
+    Enforce JWT authentication on incoming requests when AUTH_ENABLED is true.
+
+    Behavior:
+        - Expects an 'Authorization: Bearer <token>' header.
+        - On missing/invalid token, returns a 401 JSON error response.
+        - Skips authentication for Flask's 'static' endpoint.
+
+    Returns:
+        flask.Response | None: 401 response on failure; None to continue on success.
+    """
     if AUTH_ENABLED and request.endpoint not in ['static']:
         auth_header = request.headers.get("Authorization")
         if auth_header is None or not auth_header.startswith("Bearer "):
@@ -96,6 +138,17 @@ def check_jwt():
 
 @app.route("/validate-spot-query", methods=["POST"])
 def validate_spot_query_route():
+    """
+    Validate a spot query JSON payload against the JSON Schema and custom rules.
+
+    Expects:
+        JSON body matching ./schemas/spot_query.json plus extra semantic checks
+        applied by `validate_spot_query`.
+
+    Returns:
+        (flask.Response, int): 200 with {"status":"success"} on success;
+        400 with {"status":"error","errorType":"spot_queryInvalid","message": "..."} on failure.
+    """
     data = request.json
 
     try:
@@ -113,6 +166,24 @@ def validate_spot_query_route():
 
 @app.route("/get-pg-query", methods=["POST"])
 def get_spot_query_route():
+    """
+    Build and return the generated PostgreSQL query for a valid spot query.
+
+    Process:
+        1) Validate input JSON (schema + custom checks).
+        2) Clean the spot query.
+        3) Set/derive the search area in Flask `g`.
+        4) Construct the SQL using `constructor.construct_query_from_graph`.
+        5) Return the SQL string (cursor.as_string).
+
+    Returns:
+        str | flask.Response: SQL query string on success; JSON error response otherwise.
+
+    Errors:
+        422 (areaInvalid): When the area is invalid.
+        400 (valueError): Validation errors.
+        500: Database-related exceptions (InterfaceError, ProgrammingError, DatabaseError, OperationalError).
+    """
     data = request.json
     db = get_db()
     cursor = db.cursor(cursor_factory=psycopg2.extras.DictCursor)
@@ -159,6 +230,32 @@ def get_spot_query_route():
 
 @app.route("/run-spot-query", methods=["POST"])
 def run_spot_query_route():
+    """
+    Execute a validated spot query and return results as GeoJSON along with metadata.
+
+    Process:
+        1) Validate input JSON (schema + custom checks).
+        2) Clean query, set area, and verify area surface (via `check_area_surface`).
+        3) Construct the SQL query from the graph.
+        4) Apply statement timeout from TIMEOUT env var and execute the query.
+        5) Transform rows to GeoJSON; compute set stats; include timing checkpoints.
+
+    Returns:
+        (flask.Response, int): 200 with payload:
+            {
+              "results": <GeoJSON FeatureCollection>,
+              "query": <SQL string> (only in development),
+              "area": <area value> (if available),
+              "sets": {"distinct_sets": [...], "stats": {...}},
+              "timing": [...],
+              "status": "success"
+            }
+        Error responses:
+            422 areaInvalid,
+            408 queryTimeout (QueryCanceledError),
+            400 valueError,
+            500 database exceptions.
+    """
     timer = Timer()
     data = request.json
     db = get_db()

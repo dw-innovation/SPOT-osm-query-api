@@ -4,6 +4,81 @@ from psycopg2 import sql
 
 
 def construct_relations(spot_query):
+    """Build a composed SQL query from a graph of spatial relations.
+
+    This function turns a lightweight graph specification into a single
+    `psycopg2.sql` composed query. Nodes represent source tables (by numeric ID),
+    and edges describe spatial relations between those tables. Supported
+    relations:
+
+    - `"distance"`: Uses `ST_DWithin(source.transformed_geom, target.transformed_geom, meters)`
+      where the distance is parsed and normalized to meters via `distance_to_meters`.
+    - `"contains"`: Uses `ST_Intersects(source.transformed_geom, target.transformed_geom)`.
+
+    The output query:
+    - Produces a UNION of per-node SELECTs.
+    - Includes `set_name`, `osm_ids`, `geom`, `tags`, `primitive_type`.
+    - Adds `primary_osm_id` when a node participates in a relation (derived from
+      the first node in the provided `nodes` list), otherwise `NULL`.
+    - Groups final results to deduplicate identical rows.
+
+    Args:
+      spot_query (dict):
+        A graph-like specification with the following shape:
+        ```
+        {
+          "nodes": [
+            {"id": <int|str>, "name": <str>}, ...
+          ],
+          "edges": [
+            {
+              "source": <node_id>,
+              "target": <node_id>,
+              "type": "distance" | "contains",
+              # required when type == "distance"; examples: "50m", "0.2km"
+              "value": <str|number>
+            },
+            ...
+          ]
+        }
+        ```
+        Notes:
+        - Each `nodes[i]["id"]` is the actual table identifier used in FROM/JOIN
+          clauses (cast to text).
+        - Each `nodes[i]["name"]` becomes the SQL table alias for that node.
+
+    Returns:
+      psycopg2.sql.Composed:
+        A fully composed and parameter-safe SQL object that can be passed to
+        `cursor.execute(final_query)`.
+
+    Raises:
+      ValueError: If an edge references the same source and target node
+        (`"selfReferencingEdge"`).
+
+    Examples:
+      Basic usage:
+      >> final_query = construct_relations({
+      ...   "nodes": [
+      ...     {"id": 123, "name": "parks"},
+      ...     {"id": 456, "name": "schools"}
+      ...   ],
+      ...   "edges": [
+      ...     {"source": 123, "target": 456, "type": "distance", "value": "500m"}
+      ...   ]
+      ... })
+      >> # cursor.execute(final_query)
+
+    Implementation details:
+      - Uses `psycopg2.sql.Identifier` and `psycopg2.sql.Literal` to avoid SQL injection.
+      - Chains multiple join conditions per target with `AND`.
+      - Only nodes that appear in at least one edge are joined; isolated nodes are
+        still returned via standalone SELECTs.
+
+    Complexity:
+      O(N + E) to build the query components, where N is the number of nodes and
+      E is the number of edges.
+    """
     edges = spot_query.get(
         "edges", []
     )  # Get edges from input map relation, set to empty list if not found
