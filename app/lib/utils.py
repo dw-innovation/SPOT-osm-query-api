@@ -74,6 +74,38 @@ def results_to_geojson(results):
     return geojson
 
 
+def eps_to_h3_resolution(eps_meters: float) -> int:
+    """
+    Select an H3 resolution whose hex diameter is ~2.4x the eps distance.
+    This ensures most DBSCAN clusters / DWithin join candidates fall within
+    a single partition cell, minimising false negatives at boundaries.
+
+    H3 average hex edge lengths (meters) by resolution:
+      res 4  ~  22,606 m  -> diameter ~  45,212 m
+      res 5  ~   8,544 m  -> diameter ~  17,088 m
+      res 6  ~   3,229 m  -> diameter ~   6,458 m
+      res 7  ~   1,220 m  -> diameter ~   2,440 m
+      res 8  ~     461 m  -> diameter ~     922 m
+      res 9  ~     174 m  -> diameter ~     348 m
+      res 10 ~      65 m  -> diameter ~     130 m
+      res 11 ~      25 m  -> diameter ~      50 m
+    """
+    thresholds = [
+        (18_000, 4),
+        (7_000,  5),
+        (2_600,  6),
+        (1_000,  7),
+        (380,    8),
+        (145,    9),
+        (54,    10),
+        (0,     11),
+    ]
+    for threshold, resolution in thresholds:
+        if eps_meters >= threshold:
+            return resolution
+    return 11
+
+
 def distance_to_meters(distance_str: str) -> str:
     """
     Convert distance with unit to meters.
