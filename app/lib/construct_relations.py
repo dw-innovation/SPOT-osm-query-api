@@ -1,6 +1,17 @@
 from collections import defaultdict
 from .utils import distance_to_meters, eps_to_h3_resolution
+import os
 from psycopg2 import sql
+
+def get_max_nodes_per_set():
+    """
+    Maximum number of distinct result rows returned per set (subquery),
+    configurable via the MAX_NODES_PER_SET environment variable (default: 500).
+    One extra row is fetched per set so callers can detect that a set was
+    truncated. Read lazily so values loaded from .env via load_dotenv() are
+    picked up regardless of import order.
+    """
+    return int(os.getenv("MAX_NODES_PER_SET", 500))
 
 
 def construct_relations(spot_query):
@@ -225,15 +236,25 @@ def construct_relations(spot_query):
     union = sql.SQL(" UNION ALL ").join(final_queries)
 
     final_query = sql.SQL(
-        """ 
-            SELECT 
-                subquery.set_name, 
-                subquery.osm_ids, 
-                subquery.geom, 
-                subquery.tags, 
-                subquery.primitive_type
-            FROM ({query}) AS subquery
-            GROUP BY subquery.set_name, subquery.osm_ids, subquery.geom, subquery.tags, subquery.primitive_type;"""
-    ).format(query=union)
+        """
+            SELECT
+                deduped.set_name,
+                deduped.osm_ids,
+                deduped.geom,
+                deduped.tags,
+                deduped.primitive_type
+            FROM (
+                SELECT
+                    subquery.set_name,
+                    subquery.osm_ids,
+                    subquery.geom,
+                    subquery.tags,
+                    subquery.primitive_type,
+                    ROW_NUMBER() OVER (PARTITION BY subquery.set_name) AS row_num
+                FROM ({query}) AS subquery
+                GROUP BY subquery.set_name, subquery.osm_ids, subquery.geom, subquery.tags, subquery.primitive_type
+            ) AS deduped
+            WHERE deduped.row_num <= {limit};"""
+    ).format(query=union, limit=sql.Literal(get_max_nodes_per_set() + 1))
 
     return final_query

@@ -45,6 +45,7 @@ docker run -p 5000:5000 \
 | `DATABASE_PORT` | Port for the DB connection. |
 | `JWT_SECRET` | **Secret**: Secret used for API auth via JWT. |
 | `PORT` | Port to expose the API on (default: `5000`). |
+| `MAX_NODES_PER_SET` | Maximum number of result nodes returned per set/subquery; exceeding sets are truncated and flagged with a warning (default: `500`). |
 
 > **🔒 Security Note:** Store sensitive information in a `.env` file. Never commit secrets to version control.
 

@@ -19,6 +19,7 @@ from lib.utils import (
 )
 from lib.database import initialize_connection_pool, get_db, close_db
 import lib.constructor as constructor
+from lib.construct_relations import get_max_nodes_per_set
 from collections import Counter
 from lib.timer import Timer
 from flask_compress import Compress
@@ -292,6 +293,22 @@ def run_spot_query_route():
         # Fetch all results as a list of dictionaries
         results = [dict(record) for record in cursor]
 
+        # The query returns at most max_nodes_per_set + 1 rows per set; the
+        # extra row only signals that a set exceeded the limit.
+        max_nodes_per_set = get_max_nodes_per_set()
+        raw_set_counts = Counter(result["set_name"] for result in results)
+        truncated_sets = sorted(
+            name for name, count in raw_set_counts.items() if count > max_nodes_per_set
+        )
+        if truncated_sets:
+            kept_counts = Counter()
+            capped_results = []
+            for result in results:
+                if kept_counts[result["set_name"]] < max_nodes_per_set:
+                    kept_counts[result["set_name"]] += 1
+                    capped_results.append(result)
+            results = capped_results
+
         # spots = get_spots(results)
         geojson = results_to_geojson(results)
         timer.add_checkpoint("results_transformation_to_geojson")
@@ -309,6 +326,23 @@ def run_spot_query_route():
             ),
             **({"area": area_value} if area_value is not None else {}),
             "sets": {"distinct_sets": distinct_set_names, "stats": set_name_counts},
+            **(
+                {
+                    "warnings": [
+                        {
+                            "type": "maxNodesExceeded",
+                            "sets": truncated_sets,
+                            "message": (
+                                f"The following sets exceeded the maximum of "
+                                f"{max_nodes_per_set} nodes and were truncated: "
+                                f"{', '.join(truncated_sets)}"
+                            ),
+                        }
+                    ]
+                }
+                if truncated_sets
+                else {}
+            ),
             # "spots": spots,
             "timing": timer.get_all_checkpoints(),
             "status": "success",
