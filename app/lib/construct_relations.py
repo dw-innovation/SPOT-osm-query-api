@@ -1,5 +1,5 @@
 from collections import defaultdict
-from .utils import distance_to_meters, eps_to_h3_resolution
+from .utils import distance_to_meters
 import os
 from psycopg2 import sql
 
@@ -126,21 +126,17 @@ def construct_relations(spot_query):
         # Process 'distance' type
         if type == "distance":
             distance = distance_to_meters(edge["value"])  # Convert distance to meters
-            h3_resolution = eps_to_h3_resolution(float(distance))
 
-            # H3 neighbor pre-filter narrows the cross-join to candidate pairs
-            # whose hex cells are adjacent (k=1 ring = cell itself + 6 neighbors).
-            # ST_DWithin then confirms exact distance on that reduced candidate set.
+            # Geometries are already projected to UTM, so ST_DWithin measures
+            # metres and can use the spatial index directly. An H3 pre-filter
+            # used to narrow the candidate pairs first, but the h3 extension is
+            # not installed on the database, which made every query with a
+            # distance relation fail outright.
             condition = sql.SQL(
-                "h3_lat_lng_to_cell(ST_Y({source_alias}.geom), ST_X({source_alias}.geom), {h3_res})"
-                " = ANY(h3_grid_disk("
-                "h3_lat_lng_to_cell(ST_Y({target_alias}.geom), ST_X({target_alias}.geom), {h3_res})"
-                ", 1))"
-                " AND ST_DWithin({source_alias}.transformed_geom, {target_alias}.transformed_geom, {distance})"
+                "ST_DWithin({source_alias}.transformed_geom, {target_alias}.transformed_geom, {distance})"
             ).format(
                 source_alias=sql.Identifier(source_name),
                 target_alias=sql.Identifier(target_name),
-                h3_res=sql.Literal(h3_resolution),
                 distance=sql.Literal(distance),
             )
 
