@@ -1,14 +1,14 @@
 name: Build image
 
 # Pull requests build the image without publishing it, so a change that does
-# not build is caught before merging. Pushes to main publish, tagged with the
-# commit they were built from, so the running container can be traced back to
-# a commit — which was impossible while images were built on the server and
-# named without a version.
+# not build is caught before merging. Pushes to main and staging publish,
+# tagged with the branch and with the commit they were built from, so a
+# running container can be traced back to a commit — which was impossible
+# while images were built on the server and named without a version.
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
     tags: ["v*"]
   pull_request:
 
@@ -36,9 +36,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # sha-<short> is the immutable one to pin a deployment to;
+          # main and staging move with their branch.
           tags: |
             type=sha,format=short
-            type=raw,value=main,enable={{is_default_branch}}
+            type=ref,event=branch
             type=ref,event=tag
 
       - uses: docker/build-push-action@v6
@@ -48,7 +50,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Keeps the layer cache in Actions rather than on the server, where
-          # it had grown to 22 GB.
+          # it had grown to 22 GB of an 80 GB volume.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
