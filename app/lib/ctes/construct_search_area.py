@@ -48,10 +48,15 @@ def construct_search_area_geometry():
                 ymax=sql.Literal(g.area["bbox"][3]),
             )
 
-        # Handle geojson area type
+        # Handle geojson area type. The outline is simplified (0.001 degrees,
+        # roughly 100 m) to keep the intersection test cheap for detailed
+        # boundaries. ST_SimplifyPreserveTopology rather than ST_Simplify,
+        # because the result is used for an exact test: ST_Simplify can return
+        # a self-intersecting outline, and NULL for an area smaller than the
+        # tolerance, which made such a search silently return nothing.
         if area_type == "area":
             return sql.SQL(
-                "ST_SetSRID(ST_Simplify(ST_GeomFromGeoJSON({searchAreaGeometry}), 0.001), 4326)"
+                "ST_SetSRID(ST_SimplifyPreserveTopology(ST_GeomFromGeoJSON({searchAreaGeometry}), 0.001), 4326)"
             ).format(
                 searchAreaGeometry=sql.Literal(g.area["geometry"]),
             )
@@ -71,10 +76,21 @@ def construct_search_area_filter():
     selectivity; with a constant it can estimate from the column statistics how
     many rows the area covers and pick the plan accordingly.
 
+    A bounding box is tested with `&&`, which compares it with the bounding
+    box of each geometry. A GeoJSON area is tested with `ST_Intersects`:
+    comparing bounding boxes there would also return everything in the corners
+    of the area's bounding box that lies outside the area itself. Both use the
+    spatial index.
+
     Returns:
         psycopg2.sql.Composed: A SQL condition on the `geom` column.
 
     Raises:
         AreaInvalidError: If the area type is unknown or the area is malformed.
     """
-    return sql.SQL("geom && {area}").format(area=construct_search_area_geometry())
+    area = construct_search_area_geometry()
+
+    if g.area["type"] == "area":
+        return sql.SQL("ST_Intersects(geom, {area})").format(area=area)
+
+    return sql.SQL("geom && {area}").format(area=area)
