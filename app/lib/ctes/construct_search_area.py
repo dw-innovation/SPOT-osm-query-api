@@ -14,33 +14,34 @@ class AreaInvalidError(Exception):
     pass
 
 
-def construct_search_area_cte(type):
+def construct_search_area_geometry():
     """
-    Constructs a SQL Common Table Expression (CTE) that defines a spatial
-    search area, either as a bounding box or a GeoJSON geometry.
+    Builds the SQL expression for the search area of the current request,
+    either a bounding box or a GeoJSON geometry, in WGS84 (SRID 4326) like the
+    geometries it is compared against.
 
-    Args:
-        type (str): Type of area definition. Supported values:
-            - "bbox": Uses coordinates from `g.area["bbox"]` to create an envelope.
-            - "area": Uses a GeoJSON geometry from `g.area["geometry"]`.
+    The expression contains only literals, so PostgreSQL folds it into a
+    constant while planning.
 
     Returns:
-        psycopg2.sql.Composed: A SQL CTE defining the envelope geometry.
+        psycopg2.sql.Composed: A SQL expression evaluating to the area geometry.
 
     Raises:
-        AreaInvalidError: If there is a failure constructing the geometry or CTE.
+        AreaInvalidError: If the area type is unknown or the area is malformed.
 
     Notes:
-        - Uses the current UTM projection from `flask.g.utm`.
-        - The output CTE is named "envelope" and contains a single geometry column.
+        - Reads the area from `flask.g.area`:
+            - "bbox": coordinates from `g.area["bbox"]`.
+            - "area": a GeoJSON geometry from `g.area["geometry"]`.
     """
-    # Handle bounding box type
     try:
-        if type == "bbox":
-            geometry = sql.SQL(
-                "ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}, {utm})"
+        area_type = g.area["type"]
+
+        # Handle bounding box type
+        if area_type == "bbox":
+            return sql.SQL(
+                "ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}, 4326)"
             ).format(
-                utm=sql.Literal(g.utm),
                 xmin=sql.Literal(g.area["bbox"][0]),
                 ymin=sql.Literal(g.area["bbox"][1]),
                 xmax=sql.Literal(g.area["bbox"][2]),
@@ -48,16 +49,32 @@ def construct_search_area_cte(type):
             )
 
         # Handle geojson area type
-        elif type == "area":
-            geometry = sql.SQL("ST_SIMPLIFY(ST_GeomFromGeoJSON({searchAreaGeometry}), 0.001)").format(
+        if area_type == "area":
+            return sql.SQL(
+                "ST_SetSRID(ST_Simplify(ST_GeomFromGeoJSON({searchAreaGeometry}), 0.001), 4326)"
+            ).format(
                 searchAreaGeometry=sql.Literal(g.area["geometry"]),
             )
-
-        # Construct the CTE (Common Table Expression) using the generated geometry
-        cte = sql.SQL("{envelope} AS (SELECT {geometry} AS geom)").format(
-            envelope=sql.Identifier("envelope"), geometry=geometry
-        )
-
-        return cte
     except Exception as e:
         raise AreaInvalidError(e)
+
+    raise AreaInvalidError(f"Unsupported area type: {area_type}")
+
+
+def construct_search_area_filter():
+    """
+    Builds the SQL condition that restricts a table scan to the search area.
+
+    The area is written into the condition as a constant instead of being read
+    from a CTE (`geom && (SELECT geom FROM envelope)`). With a subquery the
+    planner does not know the area while planning and falls back to a default
+    selectivity; with a constant it can estimate from the column statistics how
+    many rows the area covers and pick the plan accordingly.
+
+    Returns:
+        psycopg2.sql.Composed: A SQL condition on the `geom` column.
+
+    Raises:
+        AreaInvalidError: If the area type is unknown or the area is malformed.
+    """
+    return sql.SQL("geom && {area}").format(area=construct_search_area_geometry())
