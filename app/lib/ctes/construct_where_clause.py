@@ -2,11 +2,12 @@ import re
 from psycopg2 import sql
 
 from ..utils import distance_to_meters
+from .construct_search_area import construct_search_area_filter
 
 def construct_cte_where_clause(filters):
     """
     Constructs a SQL WHERE clause for filtering OSM features based on tag conditions
-    and spatial intersection with the defined envelope.
+    and spatial intersection with the search area.
 
     Args:
         filters (list): A list of dictionaries representing filter conditions.
@@ -14,22 +15,20 @@ def construct_cte_where_clause(filters):
                         direct key/operator/value conditions.
 
     Returns:
-        psycopg2.sql.Composed: A composed SQL WHERE clause combining the envelope
-        intersection filter and user-defined tag filters.
+        psycopg2.sql.Composed: A composed SQL WHERE clause combining the search
+        area filter and user-defined tag filters.
 
     Notes:
-        - Always adds a spatial envelope filter: `geom && (SELECT geom FROM envelope)`.
+        - Always adds the search area filter of the current request, see
+          `construct_search_area_filter`.
         - Returns an empty string if no filters are provided.
     """
 
     if not filters:
         return ""
 
-    area_filter = sql.SQL("geom && (SELECT geom FROM envelope)")
     where_filters = [construct_filter(f) for f in filters]
-
-    if area_filter:
-        where_filters.insert(0, area_filter)
+    where_filters.insert(0, construct_search_area_filter())
 
     return sql.SQL(" AND ").join(where_filters)
 

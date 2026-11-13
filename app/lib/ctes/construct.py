@@ -1,5 +1,3 @@
-from flask import g
-from .construct_search_area import construct_search_area_cte
 from .construct_nwrs import construct_nwr_cte
 from .construct_cluster import construct_cluster_cte
 
@@ -7,11 +5,10 @@ from .construct_cluster import construct_cluster_cte
 def construct_ctes(spot_query):
     """
     Constructs a list of SQL Common Table Expressions (CTEs)
-    from the input SPOT query.
+    from the input SPOT query, one for each node.
 
-    This includes:
-      - An envelope CTE based on the global area.
-      - Additional CTEs for each node in the SPOT query.
+    The search area is not a CTE of its own: each node CTE filters on it
+    directly, see `construct_search_area_filter`.
 
     Args:
         spot_query (dict): A dictionary containing the query definition,
@@ -19,27 +16,9 @@ def construct_ctes(spot_query):
 
     Returns:
         list: A list of CTE SQL statements as strings or SQL objects,
-            constructed from the search area and node definitions.
+            constructed from the node definitions.
     """
-    # Initialize an empty list to hold the CTEs
-    ctes = []
-
-    # Extract nodes from the SPOT query
-    nodes = spot_query["nodes"]
-
-    # Construct envelope CTE
-    envelope_cte = construct_search_area_cte(g.area["type"])
-
-    ctes.append(envelope_cte)
-    
-    # Iterate over the nodes to construct each CTE
-    for i in range(len(nodes)):
-        cte = construct_cte(nodes[i])
-
-        # Append the CTE to the list
-        ctes.append(cte)
-
-    return ctes
+    return [construct_cte(node) for node in spot_query["nodes"]]
 
 
 def construct_cte(node):
