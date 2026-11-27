@@ -8,7 +8,8 @@ Build a complete SQL query (WITH CTEs + JOINed relations) from a graph spec.
 
 This module orchestrates two steps:
 1) `construct_ctes(spot_query)` generates Common Table Expressions (CTEs) for all nodes.
-2) `construct_relations(spot_query)` generates the main SELECT + JOINs across those nodes.
+2) `construct_relations(spot_query)` generates the CTE that relates those nodes and
+   the main SELECT.
 
 The result is a single `psycopg2.sql` composed query ready for execution.
 """
@@ -18,9 +19,10 @@ def construct_query_from_graph(spot_query):
 
     This function delegates to:
       - `construct_ctes(spot_query)` to build node CTEs, and
-      - `construct_relations(spot_query)` to build the main SELECT with spatial joins.
+      - `construct_relations(spot_query)` to build the CTE with the spatial joins
+        and the main SELECT.
 
-    The two parts are combined into a single `WITH ... SELECT ...` query using
+    The parts are combined into a single `WITH ... SELECT ...` query using
     `psycopg2.sql` objects to ensure identifier/literal safety.
 
     Args:
@@ -44,11 +46,11 @@ def construct_query_from_graph(spot_query):
         # Construct the node CTEs based on the intermediate representation
         ctes = construct_ctes(spot_query)
 
-        # Combine the node constructed CTEs with the SQL WITH clause
-        combined_ctes = sql.SQL("WITH ") + sql.SQL(", ").join(ctes)
-
         # Construct the relations (JOINs) based on the intermediate representation
-        relations = construct_relations(spot_query)
+        relation_ctes, relations = construct_relations(spot_query)
+
+        # Combine all CTEs with the SQL WITH clause
+        combined_ctes = sql.SQL("WITH ") + sql.SQL(", ").join(ctes + relation_ctes)
 
         # Combine CTEs and relations to form the final query
         final_query = sql.SQL(" ").join([combined_ctes, relations])

@@ -1,5 +1,7 @@
 import json
 import os
+import time
+from datetime import datetime
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from jsonschema import validate as validate_json_schema, exceptions
@@ -126,7 +128,7 @@ def check_jwt():
     Returns:
         flask.Response | None: 401 response on failure; None to continue on success.
     """
-    if AUTH_ENABLED and request.endpoint not in ['static']:
+    if AUTH_ENABLED and request.endpoint not in ['static', 'health']:
         auth_header = request.headers.get("Authorization")
         if auth_header is None or not auth_header.startswith("Bearer "):
             return jsonify({"status": "error", "message": "Missing or invalid token"}), 401
@@ -136,6 +138,51 @@ def check_jwt():
             validate_jwt(token)
         except ValueError as e:
             return jsonify({"status": "error", "message": str(e)}), 401
+
+HEALTH_TIMEOUT = float(os.getenv("HEALTH_TIMEOUT_SECONDS", "5"))
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """
+    Report whether this service can actually run a query.
+
+    Reachable without a token even when AUTH_ENABLED is set, so an uptime
+    checker does not need credentials. It exposes no data beyond the state of
+    the service's own dependencies.
+
+    Returns:
+        flask.Response: 200 while PostgreSQL answers, 503 otherwise. The body
+        names each dependency with its latency, so an alert can say what broke
+        rather than only that something did.
+    """
+    started = time.monotonic()
+
+    try:
+        connection = get_db()
+        with connection.cursor() as cursor:
+            cursor.execute(f"SET LOCAL statement_timeout = {int(HEALTH_TIMEOUT * 1000)}")
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        database = {"ok": True, "detail": "SELECT 1 ok"}
+    except Exception as exc:
+        database = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+
+    database["latencyMs"] = int((time.monotonic() - started) * 1000)
+    database["critical"] = True
+
+    return (
+        jsonify(
+            {
+                "status": "ok" if database["ok"] else "degraded",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "durationMs": database["latencyMs"],
+                "checks": {"database": database},
+            }
+        ),
+        200 if database["ok"] else 503,
+    )
+
 
 @app.route("/validate-spot-query", methods=["POST"])
 def validate_spot_query_route():
