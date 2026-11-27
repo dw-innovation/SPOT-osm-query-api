@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from jsonschema import validate as validate_json_schema, exceptions
+import threading
 import psycopg2
 from psycopg2 import DatabaseError, ProgrammingError, InterfaceError, OperationalError
 from psycopg2.extensions import QueryCanceledError
@@ -79,12 +80,23 @@ AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ["true", "1", "yes"
 with open("./schemas/spot_query.json", "r") as file:
     schema = json.load(file)
 
-@app.before_first_request
+_pool_lock = threading.Lock()
+_pool_ready = False
+
+@app.before_request
 def setup():
     """
-    Initialize the database connection pool before the first request.
+    Initialize the database connection pool once, before the first request.
+
+    Replaces Flask's removed `before_first_request` hook (gone in Flask 2.3+).
     """
-    initialize_connection_pool(DATABASE)
+    global _pool_ready
+    if _pool_ready:
+        return
+    with _pool_lock:
+        if not _pool_ready:
+            initialize_connection_pool(DATABASE)
+            _pool_ready = True
 
 @app.teardown_appcontext
 def teardown(e=None):
