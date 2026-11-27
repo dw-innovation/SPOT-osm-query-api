@@ -56,6 +56,9 @@ def construct_query_from_graph(spot_query):
         # Return the final SQL query
         return final_query
 
+    except ValueError:
+        # Invalid user input (e.g. unknown unit): let the route return a 400
+        raise
     except Exception as e:
         print(f"An error occurred in constructor.py: {e}")
         return None

@@ -1,7 +1,7 @@
 import re
 from psycopg2 import sql
 
-from ..utils import distance_to_meters
+from ..utils import distance_to_meters, DISTANCE_CONVERSION_RATES
 
 def construct_cte_where_clause(filters):
     """
@@ -50,6 +50,31 @@ def sanitize_for_regex(value):
     return value
 
 
+def construct_numeric_tag_expression(key):
+    """
+    Builds a SQL expression that parses a tag value like "10", "1,5" or "10 m"
+    into meters (FLOAT). Unparseable values or unknown units yield NULL, so
+    comparisons on them are never true.
+    """
+    unit_cases = sql.SQL(" ").join(
+        sql.SQL("WHEN {unit} THEN {rate}").format(
+            unit=sql.Literal(unit), rate=sql.Literal(rate)
+        )
+        for unit, rate in DISTANCE_CONVERSION_RATES.items()
+    )
+    return sql.SQL(
+        """(
+            SELECT REPLACE(m[1], ',', '.')::FLOAT * CASE m[2] WHEN '' THEN 1 {unit_cases} END
+            FROM (
+                SELECT REGEXP_MATCH(
+                    LOWER(tags->> {key}),
+                    '^\\s*(\\d+(?:[.,]\\d+)?)\\s*([a-z]*)\\s*$'
+                ) AS m
+            ) AS parsed
+        )"""
+    ).format(key=sql.Literal(key), unit_cases=unit_cases)
+
+
 def construct_filter(filter):
     """
     Recursively constructs a SQL condition from a filter dictionary.
@@ -86,11 +111,14 @@ def construct_filter(filter):
     operator = filter.get("operator", "operator")
     value = filter.get("value", "value")
 
-    if key in ["height", "width", "length"] or operator in [">", "<"]:
-        value = distance_to_meters(value)
-
     if value == "***any***":
         return sql.SQL("tags ? {key}").format(key=sql.Literal(key))
+
+    is_dimension = key in ["height", "width", "length"]
+    numeric = operator in [">", "<"] or (is_dimension and operator == "=")
+
+    if numeric:
+        value = float(distance_to_meters(value))
 
     if operator == "~":
         value = sanitize_for_regex(value)
@@ -101,19 +129,11 @@ def construct_filter(filter):
             value=sql.Literal(value)
         )
 
-    elif operator in [">", "<"]:
-        sql_template = sql.SQL(
-            """
-            CASE 
-                WHEN tags->> {key} ~ '^[0-9]+(\\.[0-9]+)?$'
-                THEN CAST(tags->> {key} AS FLOAT) {operator} {value}
-                ELSE FALSE 
-            END
-            """
-        ).format(
-            key=sql.Literal(key),
+    elif numeric:
+        sql_template = sql.SQL("{expr} {operator} {value}").format(
+            expr=construct_numeric_tag_expression(key),
             operator=sql.SQL(operator),
-            value=sql.Literal(value)
+            value=sql.Literal(value),
         )
 
     else:

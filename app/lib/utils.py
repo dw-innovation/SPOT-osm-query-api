@@ -144,6 +144,35 @@ def eps_to_h3_resolution(eps_meters: float) -> int:
     return 11
 
 
+# Conversion rates from distance units to meters
+DISTANCE_CONVERSION_RATES = {
+    "m": 1,
+    "meters": 1,
+    "meter": 1,
+    "metres": 1,
+    "km": 1000,
+    "kilometer": 1000,
+    "kilometers": 1000,
+    "ft": 0.3048,
+    "foot": 0.3048,
+    "mile": 1609.34,
+    "miles": 1609.34,
+    "mi": 1609.34,
+    "yd": 0.9144,
+    "yard": 0.9144,
+    "yards": 0.9144,
+    "in": 0.0254,
+    "inch": 0.0254,
+    "inches": 0.0254,
+    "cm": 0.01,
+    "centimeter": 0.01,
+    "centimeters": 0.01,
+    "mm": 0.001,
+    "millimeter": 0.001,
+    "millimeters": 0.001,
+}
+
+
 def distance_to_meters(distance_str: str) -> str:
     """Normalize a distance string with units into meters.
 
@@ -159,41 +188,19 @@ def distance_to_meters(distance_str: str) -> str:
     Raises:
         ValueError: If the string format is invalid or uses an unknown unit.
     """
-    # Conversion rates for different units
-    conversion_rates = {
-        "m": 1,
-        "meters": 1,
-        "meter": 1,
-        "metres": 1,
-        "km": 1000,
-        "kilometer": 1000,
-        "kilometers": 1000,
-        "ft": 0.3048,
-        "foot": 0.3048,
-        "mile": 1609.34,
-        "miles": 1609.34,
-        "mi": 1609.34,
-        "yd": 0.9144,
-        "yard": 0.9144,
-        "yards": 0.9144,
-        "in": 0.0254,
-        "inch": 0.0254,
-        "inches": 0.0254,
-        "cm": 0.01,
-        "centimeter": 0.01,
-        "centimeters": 0.01,
-        "mm": 0.001,
-        "millimeter": 0.001,
-        "millimeters": 0.001,
-    }
+    conversion_rates = DISTANCE_CONVERSION_RATES
 
     # Use regex to extract value and unit
-    match = re.match(r"(?P<value>[\d.]+)\s?(?P<unit>[a-zA-Z]*)", distance_str)
+    # Accept both "." and "," as decimal separator; the whole string must match
+    match = re.fullmatch(
+        r"\s*(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>[a-zA-Z]*)\s*",
+        str(distance_str),
+    )
 
     if not match:
-        raise ValueError(f"Invalid format: {distance_str}")
+        raise ValueError(f"Invalid distance format: {distance_str}")
 
-    value_str = match.group("value")
+    value_str = match.group("value").replace(",", ".")
     unit = match.group("unit").lower()
 
     # If there's no unit, return the numeric value as a string
